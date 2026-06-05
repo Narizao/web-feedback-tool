@@ -115,6 +115,10 @@
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .modal .foot{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--line)}
   .modal .foot button{flex:1}
+  .clients-list{display:flex;flex-direction:column;gap:2px;max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px;background:var(--panel2)}
+  .clients-list label{display:flex;align-items:center;gap:9px;padding:6px;border-radius:6px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);margin:0}
+  .clients-list label:hover{background:var(--bg)}
+  .clients-list input{width:auto;margin:0}
   .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:10px 16px;border-radius:10px;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:.25s;z-index:60}
   .toast.show{opacity:1}
   .hint{font-size:11px;color:var(--muted)}
@@ -233,7 +237,7 @@
       <div class="body">
         <div><label>Project name</label><input id="pmName" type="text" placeholder="Acme website"></div>
         <div><label>Site URL</label><input id="pmUrl" type="text" placeholder="https://..." spellcheck="false"></div>
-        <div><label>Assign to client</label><select id="pmClient"></select></div>
+        <div><label>Collaborators (clients)</label><div id="pmClients" class="clients-list"></div><div class="hint" id="pmNoClients" style="display:none;margin-top:6px">No client accounts yet. Create them in Supabase &rarr; Authentication &rarr; Users.</div></div>
       </div>
       <div class="foot">
         <button id="pmCancel" class="ghost">Cancel</button>
@@ -275,9 +279,9 @@
       const d=JSON.parse(localStorage.getItem(LS_KEY)||'null');
       if(d&&d.projects&&d.projects.length){ store.projects=d.projects; store.activeId=d.activeId; store.author=d.author||''; return; }
       const o=JSON.parse(localStorage.getItem(LS_OLD)||'null');
-      if(o&&(o.items||o.url)){ const p={id:uid(),name:'Project 1',url:o.url||'',client_id:null,items:o.items||[]}; store.projects=[p]; store.activeId=p.id; store.author=o.author||''; return; }
+      if(o&&(o.items||o.url)){ const p={id:uid(),name:'Project 1',url:o.url||'',members:[],items:o.items||[]}; store.projects=[p]; store.activeId=p.id; store.author=o.author||''; return; }
     }catch(e){}
-    const p={id:uid(),name:'Project 1',url:'',client_id:null,items:[]}; store.projects=[p]; store.activeId=p.id;
+    const p={id:uid(),name:'Project 1',url:'',members:[],items:[]}; store.projects=[p]; store.activeId=p.id;
   }
 
   /* ---------- REMOTE (Supabase) ---------- */
@@ -287,19 +291,29 @@
   async function rUpdateItem(it){ try{ await sb.from('feedback').update({status:it.status,text:it.text,cat:it.cat,prio:it.prio}).eq('id',it.id); }catch(e){} }
   async function rDeleteItem(id){ try{ await sb.from('feedback').delete().eq('id',id); }catch(e){} }
   async function rClearProject(pid,onlyDraw){ try{ let q=sb.from('feedback').delete().eq('project_id',pid); if(onlyDraw) q=q.eq('kind','draw'); await q; }catch(e){} }
-  async function rInsertProject(p){ try{ const{error}=await sb.from('projects').insert({id:p.id,name:p.name,url:p.url||'',owner_id:store.uid,client_id:p.client_id||null}); if(error) toast('Project save error'); }catch(e){ toast('Project save error'); } }
-  async function rUpdateProject(p){ try{ await sb.from('projects').update({name:p.name,url:p.url||'',client_id:p.client_id||null}).eq('id',p.id); }catch(e){} }
+  async function rInsertProject(p){ try{ const{error}=await sb.from('projects').insert({id:p.id,name:p.name,url:p.url||'',owner_id:store.uid}); if(error) toast('Project save error'); }catch(e){ toast('Project save error'); } }
+  async function rUpdateProject(p){ try{ await sb.from('projects').update({name:p.name,url:p.url||''}).eq('id',p.id); }catch(e){} }
+  async function rSetMembers(projectId, memberIds, prevIds){
+    const cur=memberIds||[], prev=prevIds||[];
+    const toDel=prev.filter(id=>cur.indexOf(id)<0), toAdd=cur.filter(id=>prev.indexOf(id)<0);
+    try{
+      if(toDel.length) await sb.from('project_members').delete().eq('project_id',projectId).in('user_id',toDel);
+      if(toAdd.length) await sb.from('project_members').insert(toAdd.map(u=>({project_id:projectId,user_id:u})));
+    }catch(e){ toast('Members error'); }
+  }
   async function rDeleteProject(id){ try{ await sb.from('feedback').delete().eq('project_id',id); await sb.from('projects').delete().eq('id',id); }catch(e){} }
 
   async function refetchAll(initial){
-    let projs=[], fbs=[];
+    let projs=[], fbs=[], mems=[];
     try{
       const r1=await sb.from('projects').select('*').order('created_at',{ascending:true});
       const r2=await sb.from('feedback').select('*').order('created_at',{ascending:true});
+      const r3=await sb.from('project_members').select('project_id,user_id');
       if(r1.error||r2.error){ toast('Sync error'); return; }
-      projs=r1.data||[]; fbs=r2.data||[];
+      projs=r1.data||[]; fbs=r2.data||[]; mems=r3.data||[];
     }catch(e){ toast('Sync error'); return; }
-    const projects=projs.map(p=>({id:p.id,name:p.name,url:p.url||'',client_id:p.client_id||null,items:[]}));
+    const memMap={}; mems.forEach(m=>{ (memMap[m.project_id]=memMap[m.project_id]||[]).push(m.user_id); });
+    const projects=projs.map(p=>({id:p.id,name:p.name,url:p.url||'',members:memMap[p.id]||[],items:[]}));
     const byId=Object.fromEntries(projects.map(p=>[p.id,p]));
     fbs.forEach(f=>{ const p=byId[f.project_id]; if(p) p.items.push(rowToItem(f)); });
     store.projects=projects;
@@ -312,6 +326,7 @@
     sb.channel('feedback-rt')
       .on('postgres_changes',{event:'*',schema:'public',table:'feedback'},queueRefetch)
       .on('postgres_changes',{event:'*',schema:'public',table:'projects'},queueRefetch)
+      .on('postgres_changes',{event:'*',schema:'public',table:'project_members'},queueRefetch)
       .subscribe();
   }
 
@@ -364,7 +379,8 @@
   $('#signOutBtn').onclick=async()=>{ try{ await sb.auth.signOut(); }catch(e){} location.reload(); };
 
   /* ---------- Tabs ---------- */
-  function clientEmail(cid){ const c=store.clients.find(x=>x.id===cid); return c?c.email:'unassigned'; }
+  function membersLabel(p){ const ids=p.members||[]; if(!ids.length) return 'unassigned'; const names=ids.map(id=>{ const c=store.clients.find(x=>x.id===id); return c?c.email:'?'; }); return names.length<=2?names.join(', '):(names.length+' clients'); }
+  function membersTitle(p){ const ids=p.members||[]; if(!ids.length) return 'No collaborators assigned'; return ids.map(id=>{ const c=store.clients.find(x=>x.id===id); return c?c.email:'?'; }).join(', '); }
   function renderTabs(){
     tabbar.innerHTML='';
     store.projects.forEach(p=>{
@@ -375,7 +391,7 @@
       if(isAdmin()) html+='<button class="tedit" title="Edit / assign client">&#9998;</button><button class="tclose" title="Delete project">&#10005;</button>';
       t.innerHTML=html;
       t.querySelector('.tname').textContent=p.name;
-      if(isAdmin()) t.querySelector('.tclient').textContent=clientEmail(p.client_id);
+      if(isAdmin()){ const cl=t.querySelector('.tclient'); cl.textContent=membersLabel(p); cl.title=membersTitle(p); }
       t.onclick=e=>{ if(e.target.closest('.tclose')||e.target.closest('.tedit')) return; switchProject(p.id); };
       if(isAdmin()){
         t.title='Double-click to edit / assign';
@@ -415,9 +431,15 @@
     $('#projTitle').textContent = mode==='edit'?'Edit project':'New project';
     const p = mode==='edit'?store.projects.find(x=>x.id===id):null;
     $('#pmName').value = p?p.name:''; $('#pmUrl').value = p?(p.url||''):'';
-    const sel=$('#pmClient'); sel.innerHTML='';
-    const o0=document.createElement('option'); o0.value=''; o0.textContent='-- no client assigned --'; sel.appendChild(o0);
-    store.clients.forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.email; if(p&&p.client_id===c.id) o.selected=true; sel.appendChild(o); });
+    const box=$('#pmClients'); box.innerHTML='';
+    $('#pmNoClients').style.display = store.clients.length?'none':'block';
+    const cur = (p&&p.members)?p.members:[];
+    store.clients.forEach(c=>{
+      const lab=document.createElement('label');
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.value=c.id; if(cur.indexOf(c.id)>=0) cb.checked=true;
+      const sp=document.createElement('span'); sp.textContent=c.email;
+      lab.appendChild(cb); lab.appendChild(sp); box.appendChild(lab);
+    });
     $('#projModalBg').classList.add('show'); setTimeout(()=>$('#pmName').focus(),30);
   }
   $('#pmCancel').onclick=()=>$('#projModalBg').classList.remove('show');
@@ -425,12 +447,13 @@
   $('#pmSave').onclick=async()=>{
     const name=$('#pmName').value.trim(); if(!name){ $('#pmName').focus(); return; }
     let url=$('#pmUrl').value.trim(); if(url && !/^https?:\/\//i.test(url)) url='https://'+url;
-    const client_id=$('#pmClient').value||null;
+    const memberIds=Array.prototype.slice.call($('#pmClients').querySelectorAll('input:checked')).map(cb=>cb.value);
     if(projEditId){
-      const p=store.projects.find(x=>x.id===projEditId); if(p){ p.name=name; p.url=url; p.client_id=client_id; if(REMOTE) await rUpdateProject(p); }
+      const p=store.projects.find(x=>x.id===projEditId);
+      if(p){ const prev=p.members||[]; p.name=name; p.url=url; p.members=memberIds; if(REMOTE){ await rUpdateProject(p); await rSetMembers(p.id,memberIds,prev); } }
     } else {
-      const p={id:uid(),name:name,url:url,client_id:client_id,items:[]};
-      store.projects.push(p); store.activeId=p.id; if(REMOTE) await rInsertProject(p);
+      const p={id:uid(),name:name,url:url,members:memberIds,items:[]};
+      store.projects.push(p); store.activeId=p.id; if(REMOTE){ await rInsertProject(p); await rSetMembers(p.id,memberIds,[]); }
     }
     saveLocal(); $('#projModalBg').classList.remove('show');
     const cur=P(); if(cur){ $('#urlInput').value=cur.url||''; if(cur.url) loadUrl(cur.url,true); else resetPlaceholder(); }
