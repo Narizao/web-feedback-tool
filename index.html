@@ -137,7 +137,8 @@
   .hidden{display:none !important}
   /* ---- Device preview ---- */
   .device-stage{position:absolute;inset:0;display:flex;justify-content:center;align-items:flex-start;overflow:auto;background:#0b0d11}
-  .device{position:relative;width:100%;height:100%;background:#fff;flex:0 0 auto;margin:14px;border-radius:12px;box-shadow:0 0 0 1px var(--line),0 12px 40px rgba(0,0,0,.55);overflow:hidden}
+  .device{position:relative;flex:0 0 auto;margin:14px;border-radius:12px;box-shadow:0 0 0 1px var(--line),0 12px 40px rgba(0,0,0,.55);overflow:hidden}
+  .device-inner{position:relative;background:#fff;transform-origin:top left}
   .dvc{padding:7px 9px}
   .dvc.active{background:var(--accent);border-color:var(--accent);color:#fff}
   .dvc-w{font-size:11px;color:var(--muted);min-width:46px;text-align:center}
@@ -216,8 +217,10 @@
         <div class="frame-wrap" id="frameWrap">
           <div class="device-stage" id="deviceStage">
             <div class="device" id="device">
-              <iframe id="frame" referrerpolicy="no-referrer"></iframe>
-              <div id="overlay"><svg id="drawSvg"></svg></div>
+              <div class="device-inner" id="deviceInner">
+                <iframe id="frame" referrerpolicy="no-referrer"></iframe>
+                <div id="overlay"><svg id="drawSvg"></svg></div>
+              </div>
             </div>
           </div>
           <div class="placeholder" id="placeholder"></div>
@@ -303,7 +306,7 @@
   const store = { projects:[], activeId:null, author:'', mode:'browse', sel:null, role:'admin', uid:null, email:'', clients:[] };
   const LS_KEY='siteFeedback.v2', LS_OLD='siteFeedback.v1';
 
-  const frame=$('#frame'), overlay=$('#overlay'), wrap=$('#device'),
+  const frame=$('#frame'), overlay=$('#overlay'), wrap=$('#deviceInner'),
         svg=$('#drawSvg'), placeholder=$('#placeholder'), modePill=$('#modePill'), tabbar=$('#tabbar');
   const tools={browse:$('#tBrowse'),pin:$('#tPin'),rect:$('#tRect'),arrow:$('#tArrow'),pen:$('#tPen')};
   const list=$('#list'), emptyState=$('#emptyState');
@@ -549,17 +552,24 @@
   tools.arrow.onclick=()=>setMode('arrow');
   tools.pen.onclick=()=>setMode('pen');
   document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&!pending) setMode('browse'); });
-  // Returns pixel coordinates within the device's content area (accounts for scroll).
-  function pct(e){ const r=wrap.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; }
+  // Returns LOGICAL pixel coordinates within the device content (accounts for scroll + scale).
+  function pct(e){ const r=wrap.getBoundingClientRect(); const W=DEVW[store.device]; return {x:(e.clientX-r.left)*W/r.width, y:(e.clientY-r.top)*pageHeight/r.height}; }
 
-  /* ---------- Device preview (fixed widths + tall scrollable page) ---------- */
-  const deviceEl=$('#device'), deviceStage=$('#deviceStage');
+  /* ---------- Device preview (fixed logical width, scaled to fit screen) ---------- */
+  const deviceEl=$('#device'), deviceInner=$('#deviceInner'), deviceStage=$('#deviceStage');
   const DEVW={desktop:1280,tablet:768,mobile:390};
   let pageHeight=2600;
   function applyDevice(){
-    deviceEl.style.width=DEVW[store.device]+'px';
-    deviceEl.style.height=pageHeight+'px';
-    $('#dvcW').textContent=DEVW[store.device]+'×'+pageHeight;
+    const W=DEVW[store.device];
+    deviceInner.style.width=W+'px';
+    deviceInner.style.height=pageHeight+'px';
+    const avail=Math.max(120, deviceStage.clientWidth-28);
+    const s=Math.min(1, avail/W);
+    store.scale=s;
+    deviceInner.style.transform='scale('+s+')';
+    deviceEl.style.width=(W*s)+'px';
+    deviceEl.style.height=(pageHeight*s)+'px';
+    $('#dvcW').textContent=W+'×'+pageHeight+(s<1?(' '+Math.round(s*100)+'%'):'');
   }
   function setDevice(d){
     store.device=d;
@@ -703,6 +713,7 @@
         const p=document.createElement('div');
         p.className='pin cat-'+i.cat+' st-'+i.status+(store.sel===i.id?' sel':'');
         p.style.left=i.x+'px'; p.style.top=i.y+'px';
+        p.style.transform='rotate(-45deg) scale('+(1/(store.scale||1))+')';
         p.innerHTML='<span>'+i.n+'</span>'; p.title=i.text;
         p.onclick=ev=>{ ev.stopPropagation(); selectItem(i.id); };
         overlay.appendChild(p);
@@ -740,7 +751,8 @@
       if(idev!==store.device) setDevice(idev);     // jump to the device the mark was made in
       const cx = it.kind==='pin'?it.x:shapeCenter(it.shape).x;
       const cy = it.kind==='pin'?it.y:shapeCenter(it.shape).y;
-      try{ deviceStage.scrollTo({left:(deviceEl.offsetLeft+cx)-deviceStage.clientWidth/2, top:(deviceEl.offsetTop+cy)-deviceStage.clientHeight/2, behavior:'smooth'}); }catch(_){}
+      const sc = store.scale||1;
+      try{ deviceStage.scrollTo({left:(deviceEl.offsetLeft+cx*sc)-deviceStage.clientWidth/2, top:(deviceEl.offsetTop+cy*sc)-deviceStage.clientHeight/2, behavior:'smooth'}); }catch(_){}
     }
     render();
     const c=list.querySelector('.card[data-id="'+id+'"]'); if(c) c.scrollIntoView({block:'nearest',behavior:'smooth'});
@@ -770,7 +782,7 @@
 
   function timeAgo(ts){ const s=(Date.now()-ts)/1000; if(s<60)return'just now'; if(s<3600)return Math.floor(s/60)+'m ago'; if(s<86400)return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
   let toastT; function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),1800); }
-  window.addEventListener('resize',()=>renderOverlay());
+  window.addEventListener('resize',()=>{ applyDevice(); renderOverlay(); });
   function setChip(){ const c=$('#syncChip'); if(REMOTE){ c.classList.add('on'); $('#syncTxt').textContent='Shared (live)'; c.title='Connected to Supabase - shared in real time'; } else { $('#syncTxt').textContent='Local'; c.title='Private mode - feedback stays in this browser.'; } }
 
   boot();
