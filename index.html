@@ -55,6 +55,13 @@
   .stage-toolbar{display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
   .stage-toolbar .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
   .mode-pill{font-size:12px;color:var(--muted);margin-left:auto}
+  .lockchip{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:20px;padding:3px 9px;white-space:nowrap}
+  .lockchip.on{color:#9be7b4;border-color:rgba(52,199,89,.4)}
+  .vbtn{padding:7px 9px}
+  .vbtn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  .snapwrap{position:relative;width:100%}
+  .snapwrap img{display:block;width:100%;height:auto}
+  .frame-wrap.snap{overflow:auto}
   .frame-wrap{position:relative;flex:1;overflow:hidden}
   iframe{width:100%;height:100%;border:0;background:#fff}
   .placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);text-align:center;padding:30px;gap:10px}
@@ -205,11 +212,18 @@
           <button id="tPen" title="Freehand draw">&#9998; Draw</button>
           <div class="sep"></div>
           <button id="tClearDraw" class="ghost" title="Remove free drawings">Clear marks</button>
+          <div class="sep"></div>
+          <button id="vLive" class="vbtn active" title="Live site (browse only)">&#128421; Live</button>
+          <button id="vSnap" class="vbtn" title="Snapshot to annotate">&#128247; Snapshot</button>
+          <button id="btnCapture" class="vbtn admin-only" title="Capture / recapture the page">&#8623; Capture</button>
           <div class="mode-pill" id="modePill">Mode: Browse</div>
         </div>
         <div class="frame-wrap" id="frameWrap">
           <iframe id="frame" referrerpolicy="no-referrer"></iframe>
-          <div id="overlay"><svg id="drawSvg"></svg></div>
+          <div id="snapWrap" class="snapwrap hidden">
+            <img id="snapImg" alt="">
+            <div id="overlay"><svg id="drawSvg"></svg></div>
+          </div>
           <div class="placeholder" id="placeholder"></div>
         </div>
       </div>

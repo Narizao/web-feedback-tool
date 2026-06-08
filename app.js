@@ -8,10 +8,10 @@
   const sb = REMOTE ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
   const $ = s => document.querySelector(s);
-  const store = { projects:[], activeId:null, author:'', mode:'browse', sel:null, role:'admin', uid:null, email:'', clients:[] };
+  const store = { projects:[], activeId:null, author:'', mode:'browse', sel:null, role:'admin', uid:null, email:'', clients:[], view:'live' };
   const LS_KEY='siteFeedback.v2', LS_OLD='siteFeedback.v1';
 
-  const frame=$('#frame'), overlay=$('#overlay'), wrap=$('#frameWrap'),
+  const frame=$('#frame'), overlay=$('#overlay'), wrap=$('#snapWrap'),
         svg=$('#drawSvg'), placeholder=$('#placeholder'), modePill=$('#modePill'), tabbar=$('#tabbar');
   const tools={browse:$('#tBrowse'),pin:$('#tPin'),rect:$('#tRect'),arrow:$('#tArrow'),pen:$('#tPen')};
   const list=$('#list'), emptyState=$('#emptyState');
@@ -34,14 +34,14 @@
   }
 
   /* ---------- REMOTE (Supabase) ---------- */
-  function rowToItem(f){ return {id:f.id,n:0,kind:f.kind,x:f.x,y:f.y,shape:f.shape,dev:f.dev||'desktop',text:f.text,cat:f.cat,prio:f.prio,status:f.status,author:f.author,ts:new Date(f.created_at).getTime()}; }
-  function itemToRow(it){ return {id:it.id,project_id:store.activeId,kind:it.kind,x:(it.x==null?null:it.x),y:(it.y==null?null:it.y),shape:it.shape,dev:it.dev||'desktop',text:it.text,cat:it.cat,prio:it.prio,status:it.status,author:it.author}; }
+  function rowToItem(f){ return {id:f.id,n:0,kind:f.kind,x:f.x,y:f.y,shape:f.shape,text:f.text,cat:f.cat,prio:f.prio,status:f.status,author:f.author,ts:new Date(f.created_at).getTime()}; }
+  function itemToRow(it){ return {id:it.id,project_id:store.activeId,kind:it.kind,x:(it.x==null?null:it.x),y:(it.y==null?null:it.y),shape:it.shape,text:it.text,cat:it.cat,prio:it.prio,status:it.status,author:it.author}; }
   async function rInsertItem(it){ try{ const{error}=await sb.from('feedback').insert(itemToRow(it)); if(error) toast('Save error'); }catch(e){ toast('Save error'); } }
   async function rUpdateItem(it){ try{ await sb.from('feedback').update({status:it.status,text:it.text,cat:it.cat,prio:it.prio}).eq('id',it.id); }catch(e){} }
   async function rDeleteItem(id){ try{ await sb.from('feedback').delete().eq('id',id); }catch(e){} }
   async function rClearProject(pid,onlyDraw){ try{ let q=sb.from('feedback').delete().eq('project_id',pid); if(onlyDraw) q=q.eq('kind','draw'); await q; }catch(e){} }
   async function rInsertProject(p){ try{ const{error}=await sb.from('projects').insert({id:p.id,name:p.name,url:p.url||'',owner_id:store.uid}); if(error) toast('Project save error'); }catch(e){ toast('Project save error'); } }
-  async function rUpdateProject(p){ try{ await sb.from('projects').update({name:p.name,url:p.url||''}).eq('id',p.id); }catch(e){} }
+  async function rUpdateProject(p){ try{ await sb.from('projects').update({name:p.name,url:p.url||'',snap_url:p.snapUrl||null,snap_w:p.snapW||null,snap_h:p.snapH||null}).eq('id',p.id); }catch(e){} }
   async function rSetMembers(projectId, memberIds, prevIds){
     const cur=memberIds||[], prev=prevIds||[];
     const toDel=prev.filter(id=>cur.indexOf(id)<0), toAdd=cur.filter(id=>prev.indexOf(id)<0);
@@ -62,7 +62,7 @@
       projs=r1.data||[]; fbs=r2.data||[]; mems=r3.data||[];
     }catch(e){ toast('Sync error'); return; }
     const memMap={}; mems.forEach(m=>{ (memMap[m.project_id]=memMap[m.project_id]||[]).push(m.user_id); });
-    const projects=projs.map(p=>({id:p.id,name:p.name,url:p.url||'',members:memMap[p.id]||[],items:[]}));
+    const projects=projs.map(p=>({id:p.id,name:p.name,url:p.url||'',members:memMap[p.id]||[],snapUrl:p.snap_url||'',snapW:p.snap_w||0,snapH:p.snap_h||0,items:[]}));
     const byId=Object.fromEntries(projects.map(p=>[p.id,p]));
     fbs.forEach(f=>{ const p=byId[f.project_id]; if(p) p.items.push(rowToItem(f)); });
     store.projects=projects;
@@ -251,16 +251,63 @@
     modePill.textContent='Mode: '+labels[m];
     if(m==='browse'){ overlay.classList.remove('capture'); } else { overlay.classList.add('capture'); }
   }
-  tools.browse.onclick=()=>setMode('browse');
-  tools.pin.onclick=()=>setMode('pin');
-  tools.rect.onclick=()=>setMode('rect');
-  tools.arrow.onclick=()=>setMode('arrow');
-  tools.pen.onclick=()=>setMode('pen');
+  tools.browse.onclick=()=>{ setView('live'); setMode('browse'); };
+  tools.pin.onclick=()=>pickTool('pin');
+  tools.rect.onclick=()=>pickTool('rect');
+  tools.arrow.onclick=()=>pickTool('arrow');
+  tools.pen.onclick=()=>pickTool('pen');
   document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&!pending) setMode('browse'); });
-  // Percentage coordinates within the preview area (the iframe fills the stage at its natural width).
+  // On-screen pixel coordinates within the preview area (relative to the iframe viewport).
   function pct(e){ const r=wrap.getBoundingClientRect(); return {x:((e.clientX-r.left)/r.width)*100, y:((e.clientY-r.top)/r.height)*100}; }
-  function autoDevice(){}
+  function autoDevice(){ applyView(); }
   function ensurePageHeight(){}
+  /* ---------- Snapshot capture + view ---------- */
+  const CAPTURE_API='https://api.microlink.io/';
+  function setView(v){
+    store.view=v;
+    if($('#vLive')) $('#vLive').classList.toggle('active', v==='live');
+    if($('#vSnap')) $('#vSnap').classList.toggle('active', v==='snap');
+    const fw=$('#frameWrap'), p=P();
+    if(v==='snap' && (!p||!p.snapUrl)){ store.view='live'; }
+    if(store.view==='snap'){
+      frame.style.display='none';
+      $('#snapWrap').classList.remove('hidden');
+      fw.classList.add('snap');
+      placeholder.style.display='none';
+      const img=$('#snapImg');
+      if(img.getAttribute('src')!==p.snapUrl){ img.onload=()=>renderOverlay(); img.src=p.snapUrl; }
+    } else {
+      frame.style.display='';
+      $('#snapWrap').classList.add('hidden');
+      fw.classList.remove('snap');
+    }
+    renderOverlay();
+  }
+  function applyView(){ const p=P(); if(p&&p.snapUrl) setView('snap'); else setView('live'); }
+  function pickTool(m){
+    if(store.view!=='snap'){
+      const p=P();
+      if(p&&p.snapUrl){ setView('snap'); } else { toast('Capture the page first (Capture button)'); return; }
+    }
+    setMode(m);
+  }
+  async function capture(){
+    const p=P(); if(!p) return; if(!p.url){ toast('Load a URL first'); return; }
+    toast('Capturing page...');
+    try{
+      const api=CAPTURE_API+'?url='+encodeURIComponent(p.url)+'&screenshot=true&fullPage=true&meta=false';
+      const r=await fetch(api); const j=await r.json();
+      const sh=j&&j.data&&j.data.screenshot;
+      if(!sh||!sh.url){ toast('Capture failed (site may block it)'); return; }
+      p.snapUrl=sh.url; p.snapW=sh.width||0; p.snapH=sh.height||0;
+      saveLocal(); if(REMOTE) rUpdateProject(p);
+      $('#snapImg').onload=()=>renderOverlay(); $('#snapImg').src=p.snapUrl;
+      setView('snap'); toast('Snapshot ready');
+    }catch(e){ toast('Capture error'); }
+  }
+  if($('#vLive')) $('#vLive').onclick=()=>{ setView('live'); setMode('browse'); };
+  if($('#vSnap')) $('#vSnap').onclick=()=>setView('snap');
+  if($('#btnCapture')) $('#btnCapture').onclick=capture;
 
   /* ---------- Mobile feedback drawer ---------- */
   $('#fabFeedback').onclick=()=>document.body.classList.add('panel-open');
@@ -434,8 +481,8 @@
   /* ---------- Export ---------- */
   $('#exJson').onclick=()=>{ const p=P(); if(!p) return; download(slug(p.name)+'-feedback.json','application/json',JSON.stringify({project:p.name,url:p.url,exported:new Date().toISOString(),count:p.items.length,items:p.items},null,2)); };
   $('#exCsv').onclick=()=>{
-    const p=P(); if(!p) return; const head=['#','type','category','priority','status','author','comment','x','y','device','created'];
-    const rows=p.items.map(i=>[i.n,i.kind,i.cat,i.prio,i.status,i.author,i.text,i.x?Math.round(i.x):'',i.y?Math.round(i.y):'',i.dev||'desktop',new Date(i.ts).toISOString()]);
+    const p=P(); if(!p) return; const head=['#','type','category','priority','status','author','comment','x','y','coord','created'];
+    const rows=p.items.map(i=>[i.n,i.kind,i.cat,i.prio,i.status,i.author,i.text,i.x?Math.round(i.x):'',i.y?Math.round(i.y):'',(i.doc?'doc':'view'),new Date(i.ts).toISOString()]);
     const csv=[head].concat(rows).map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\n');
     download(slug(p.name)+'-feedback.csv','text/csv',csv);
   };
@@ -446,6 +493,5 @@
   let toastT; function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),1800); }
   window.addEventListener('resize',renderOverlay);
   function setChip(){ const c=$('#syncChip'); if(REMOTE){ c.classList.add('on'); $('#syncTxt').textContent='Shared (live)'; c.title='Connected to Supabase - shared in real time'; } else { $('#syncTxt').textContent='Local'; c.title='Private mode - feedback stays in this browser.'; } }
-
   boot();
 })();
