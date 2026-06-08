@@ -205,24 +205,11 @@
           <button id="tPen" title="Freehand draw">&#9998; Draw</button>
           <div class="sep"></div>
           <button id="tClearDraw" class="ghost" title="Remove free drawings">Clear marks</button>
-          <div class="sep"></div>
-          <button id="dDesk" class="dvc active" title="Desktop (1280px)">&#128421;</button>
-          <button id="dTab" class="dvc" title="Tablet (768px)">&#9744;</button>
-          <button id="dMob" class="dvc" title="Mobile (390px)">&#9647;</button>
-          <button id="pgShort" class="dvc" title="Shorter preview">&#8722;</button>
-          <button id="pgTall" class="dvc" title="Taller preview (show more of the page)">&#43;</button>
-          <span id="dvcW" class="dvc-w">1280</span>
           <div class="mode-pill" id="modePill">Mode: Browse</div>
         </div>
         <div class="frame-wrap" id="frameWrap">
-          <div class="device-stage" id="deviceStage">
-            <div class="device" id="device">
-              <div class="device-inner" id="deviceInner">
-                <iframe id="frame" referrerpolicy="no-referrer" scrolling="no"></iframe>
-                <div id="overlay"><svg id="drawSvg"></svg></div>
-              </div>
-            </div>
-          </div>
+          <iframe id="frame" referrerpolicy="no-referrer"></iframe>
+          <div id="overlay"><svg id="drawSvg"></svg></div>
           <div class="placeholder" id="placeholder"></div>
         </div>
       </div>

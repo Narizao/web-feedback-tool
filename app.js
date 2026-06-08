@@ -11,7 +11,7 @@
   const store = { projects:[], activeId:null, author:'', mode:'browse', sel:null, role:'admin', uid:null, email:'', clients:[] };
   const LS_KEY='siteFeedback.v2', LS_OLD='siteFeedback.v1';
 
-  const frame=$('#frame'), overlay=$('#overlay'), wrap=$('#deviceInner'),
+  const frame=$('#frame'), overlay=$('#overlay'), wrap=$('#frameWrap'),
         svg=$('#drawSvg'), placeholder=$('#placeholder'), modePill=$('#modePill'), tabbar=$('#tabbar');
   const tools={browse:$('#tBrowse'),pin:$('#tPin'),rect:$('#tRect'),arrow:$('#tArrow'),pen:$('#tPen')};
   const list=$('#list'), emptyState=$('#emptyState');
@@ -257,54 +257,10 @@
   tools.arrow.onclick=()=>setMode('arrow');
   tools.pen.onclick=()=>setMode('pen');
   document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&!pending) setMode('browse'); });
-  // Returns LOGICAL pixel coordinates within the device content (accounts for scroll + scale).
-  function pct(e){ const r=wrap.getBoundingClientRect(); const W=DEVW[store.device]; return {x:(e.clientX-r.left)*W/r.width, y:(e.clientY-r.top)*pageHeight/r.height}; }
-
-  /* ---------- Device preview (fixed logical width, scaled to fit screen) ---------- */
-  const deviceEl=$('#device'), deviceInner=$('#deviceInner'), deviceStage=$('#deviceStage');
-  const DEVW={desktop:1280,tablet:768,mobile:390};
-  let pageHeight=3600;
-  function autoDevice(){
-    if(!P()) return; const its=items(); if(!its.length) return;
-    if(its.some(i=>(i.dev||'desktop')===store.device)) return;
-    setDevice(its[0].dev||'desktop');
-  }
-  function ensurePageHeight(){
-    let maxY=0;
-    items().forEach(i=>{
-      if((i.dev||'desktop')!==store.device) return;
-      if(i.kind==='pin'){ if(i.y>maxY) maxY=i.y; }
-      else if(i.shape){ const s=i.shape;
-        if(s.kind==='pen'){ s.pts.forEach(p=>{ if(p[1]>maxY) maxY=p[1]; }); }
-        else { if(s.y1>maxY) maxY=s.y1; if(s.y2>maxY) maxY=s.y2; }
-      }
-    });
-    if(maxY+300>pageHeight){ pageHeight=Math.ceil((maxY+300)/200)*200; applyDevice(); }
-  }
-  function applyDevice(){
-    const W=DEVW[store.device];
-    deviceInner.style.width=W+'px';
-    deviceInner.style.height=pageHeight+'px';
-    const avail=Math.max(120, deviceStage.clientWidth-28);
-    const s=Math.min(1, avail/W);
-    store.scale=s;
-    deviceInner.style.transform='scale('+s+')';
-    deviceEl.style.width=(W*s)+'px';
-    deviceEl.style.height=(pageHeight*s)+'px';
-    $('#dvcW').textContent=W+'×'+pageHeight+(s<1?(' '+Math.round(s*100)+'%'):'');
-  }
-  function setDevice(d){
-    store.device=d;
-    const map={desktop:'dDesk',tablet:'dTab',mobile:'dMob'};
-    ['dDesk','dTab','dMob'].forEach(id=>$('#'+id).classList.toggle('active', id===map[d]));
-    applyDevice(); renderOverlay();
-  }
-  $('#dDesk').onclick=()=>setDevice('desktop');
-  $('#dTab').onclick=()=>setDevice('tablet');
-  $('#dMob').onclick=()=>setDevice('mobile');
-  $('#pgTall').onclick=()=>{ pageHeight+=800; applyDevice(); renderOverlay(); };
-  $('#pgShort').onclick=()=>{ pageHeight=Math.max(800,pageHeight-800); applyDevice(); renderOverlay(); };
-  setDevice('desktop');
+  // Percentage coordinates within the preview area (the iframe fills the stage at its natural width).
+  function pct(e){ const r=wrap.getBoundingClientRect(); return {x:((e.clientX-r.left)/r.width)*100, y:((e.clientY-r.top)/r.height)*100}; }
+  function autoDevice(){}
+  function ensurePageHeight(){}
 
   /* ---------- Mobile feedback drawer ---------- */
   $('#fabFeedback').onclick=()=>document.body.classList.add('panel-open');
@@ -329,15 +285,15 @@
     if(!drawing) return;
     const tmp=svg.querySelector('#temp'); if(tmp) tmp.remove();
     const d=drawing; drawing=null;
-    const big = d.tool==='pen' ? d.pts.length>3 : (Math.abs((d.ex||d.sx)-d.sx)+Math.abs((d.ey||d.sy)-d.sy))>8;
+    const big = d.tool==='pen' ? d.pts.length>3 : (Math.abs((d.ex||d.sx)-d.sx)+Math.abs((d.ey||d.sy)-d.sy))>1.5;
     if(!big) return;
     const shape = d.tool==='pen' ? {kind:'pen',pts:d.pts} : {kind:d.tool,x1:d.sx,y1:d.sy,x2:d.ex,y2:d.ey};
     openModal({type:'draw',shape});
   });
   function renderTempShape(d){
     let t=svg.querySelector('#temp'); if(t) t.remove();
-    const ns='http://www.w3.org/2000/svg';
-    const x1=d.sx,y1=d.sy,x2=(d.ex==null?d.sx:d.ex),y2=(d.ey==null?d.sy:d.ey); let el;
+    const ns='http://www.w3.org/2000/svg', w=wrap.clientWidth,h=wrap.clientHeight;
+    const x1=d.sx/100*w,y1=d.sy/100*h,x2=(d.ex==null?d.sx:d.ex)/100*w,y2=(d.ey==null?d.sy:d.ey)/100*h; let el;
     if(d.tool==='rect'){ el=document.createElementNS(ns,'rect'); el.setAttribute('x',Math.min(x1,x2));el.setAttribute('y',Math.min(y1,y2));el.setAttribute('width',Math.abs(x2-x1));el.setAttribute('height',Math.abs(y2-y1)); }
     else { el=document.createElementNS(ns,'line'); el.setAttribute('x1',x1);el.setAttribute('y1',y1);el.setAttribute('x2',x2);el.setAttribute('y2',y2);el.setAttribute('marker-end','url(#arrow)'); }
     el.setAttribute('id','temp'); el.setAttribute('fill','none'); el.setAttribute('stroke','#5b8cff'); el.setAttribute('stroke-width','3'); el.setAttribute('stroke-dasharray','6 4');
@@ -345,9 +301,9 @@
   }
   function renderTempPen(d){
     let t=svg.querySelector('#temp'); if(t) t.remove();
-    const ns='http://www.w3.org/2000/svg';
+    const ns='http://www.w3.org/2000/svg', w=wrap.clientWidth,h=wrap.clientHeight;
     const el=document.createElementNS(ns,'polyline');
-    el.setAttribute('points',d.pts.map(p=>p[0]+','+p[1]).join(' '));
+    el.setAttribute('points',d.pts.map(p=>(p[0]/100*w)+','+(p[1]/100*h)).join(' '));
     el.setAttribute('id','temp');el.setAttribute('fill','none');el.setAttribute('stroke','#5b8cff');el.setAttribute('stroke-width','3');el.setAttribute('stroke-linejoin','round');el.setAttribute('stroke-linecap','round');
     svg.appendChild(el);
   }
@@ -368,7 +324,7 @@
     if(!pending||!P()) return;
     const text=$('#mText').value.trim(); if(!text){ $('#mText').focus(); return; }
     store.author=$('#mAuthor').value.trim();
-    const item={ id:uid(), n:0, kind:pending.type, x:pending.x, y:pending.y, shape:pending.shape||null, dev:store.device,
+    const item={ id:uid(), n:0, kind:pending.type, x:pending.x, y:pending.y, shape:pending.shape||null,
       text:text, cat:$('#mCat').value, prio:$('#mPrio').value, status:'open', author:store.author||'Anon', ts:Date.now() };
     P().items.push(item); saveLocal(); if(REMOTE) rInsertItem(item);
     renderAll(); closeModal(); setMode('browse'); toast('Feedback added');
@@ -407,7 +363,7 @@
         '<span class="tag cat-'+i.cat+'">'+catLabel[i.cat]+'</span>'+
         '<span class="prio '+i.prio+'"><span class="d"></span>'+i.prio+'</span></div>'+
       '<div class="ctext"></div>'+
-      '<div class="cmeta"><span class="devb"></span><span class="who"></span><span class="ago"></span>'+
+      '<div class="cmeta"><span class="who"></span><span class="ago"></span>'+
         '<span class="status-sel"><select>'+
           '<option value="open" '+(i.status==='open'?'selected':'')+'>&#9679; Open</option>'+
           '<option value="progress" '+(i.status==='progress'?'selected':'')+'>&#9679; In progress</option>'+
@@ -415,7 +371,6 @@
         '</select></span>'+
         '<button class="del" title="Delete">&#10005;</button></div>';
     el.querySelector('.ctext').textContent=i.text;
-    el.querySelector('.devb').textContent=devName(i.dev);
     el.querySelector('.who').textContent=i.author;
     el.querySelector('.ago').textContent='· '+timeAgo(i.ts);
     const sel=el.querySelector('select');
@@ -429,27 +384,25 @@
   function renderOverlay(){
     overlay.querySelectorAll('.pin').forEach(p=>p.remove());
     svg.innerHTML='<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L9,3 L0,6 Z" fill="#5b8cff"/></marker></defs>';
-    const ns='http://www.w3.org/2000/svg', cur=store.device;
+    const w=wrap.clientWidth,h=wrap.clientHeight,ns='http://www.w3.org/2000/svg';
     items().forEach(i=>{
-      if((i.dev||'desktop')!==cur) return;   // only show marks made in the current device width
       if(i.kind==='pin'){
         const p=document.createElement('div');
         p.className='pin cat-'+i.cat+' st-'+i.status+(store.sel===i.id?' sel':'');
-        p.style.left=i.x+'px'; p.style.top=i.y+'px';
-        p.style.transform='rotate(-45deg) scale('+(1/(store.scale||1))+')';
+        p.style.left=i.x+'%'; p.style.top=i.y+'%';
         p.innerHTML='<span>'+i.n+'</span>'; p.title=i.text;
         p.onclick=ev=>{ ev.stopPropagation(); selectItem(i.id); };
         overlay.appendChild(p);
       } else if(i.shape){
         const s=i.shape; let el;
         if(s.kind==='rect'){ el=document.createElementNS(ns,'rect');
-          el.setAttribute('x',Math.min(s.x1,s.x2));el.setAttribute('y',Math.min(s.y1,s.y2));
-          el.setAttribute('width',Math.abs(s.x2-s.x1));el.setAttribute('height',Math.abs(s.y2-s.y1));
+          el.setAttribute('x',Math.min(s.x1,s.x2)/100*w);el.setAttribute('y',Math.min(s.y1,s.y2)/100*h);
+          el.setAttribute('width',Math.abs(s.x2-s.x1)/100*w);el.setAttribute('height',Math.abs(s.y2-s.y1)/100*h);
         } else if(s.kind==='arrow'){ el=document.createElementNS(ns,'line');
-          el.setAttribute('x1',s.x1);el.setAttribute('y1',s.y1);el.setAttribute('x2',s.x2);el.setAttribute('y2',s.y2);
+          el.setAttribute('x1',s.x1/100*w);el.setAttribute('y1',s.y1/100*h);el.setAttribute('x2',s.x2/100*w);el.setAttribute('y2',s.y2/100*h);
           el.setAttribute('marker-end','url(#arrow)');
         } else { el=document.createElementNS(ns,'polyline');
-          el.setAttribute('points',s.pts.map(p=>p[0]+','+p[1]).join(' '));
+          el.setAttribute('points',s.pts.map(p=>(p[0]/100*w)+','+(p[1]/100*h)).join(' '));
         }
         el.setAttribute('fill','none');
         el.setAttribute('stroke', store.sel===i.id?'#fff':'#5b8cff');
@@ -466,20 +419,7 @@
     if(s.kind==='pen'){ const xs=s.pts.map(p=>p[0]),ys=s.pts.map(p=>p[1]); return {x:(Math.min.apply(null,xs)+Math.max.apply(null,xs))/2,y:(Math.min.apply(null,ys)+Math.max.apply(null,ys))/2}; }
     return {x:(s.x1+s.x2)/2,y:(s.y1+s.y2)/2};
   }
-  function selectItem(id){
-    store.sel = store.sel===id?null:id;
-    const it=items().find(x=>x.id===id);
-    if(store.sel && it){
-      const idev=it.dev||'desktop';
-      if(idev!==store.device) setDevice(idev);     // jump to the device the mark was made in
-      const cx = it.kind==='pin'?it.x:shapeCenter(it.shape).x;
-      const cy = it.kind==='pin'?it.y:shapeCenter(it.shape).y;
-      const sc = store.scale||1;
-      try{ deviceStage.scrollTo({left:(deviceEl.offsetLeft+cx*sc)-deviceStage.clientWidth/2, top:(deviceEl.offsetTop+cy*sc)-deviceStage.clientHeight/2, behavior:'smooth'}); }catch(_){}
-    }
-    render();
-    const c=list.querySelector('.card[data-id="'+id+'"]'); if(c) c.scrollIntoView({block:'nearest',behavior:'smooth'});
-  }
+  function selectItem(id){ store.sel=store.sel===id?null:id; render(); const c=list.querySelector('.card[data-id="'+id+'"]'); if(c) c.scrollIntoView({block:'nearest',behavior:'smooth'}); }
 
   $('#tClearDraw').onclick=()=>{
     if(!P()) return;
@@ -504,7 +444,7 @@
   $('#clearAll').onclick=()=>{ if(!isAdmin()||!P()) return; if(items().length&&confirm('Delete ALL feedback in "'+P().name+'"? This cannot be undone.')){ P().items=[]; store.sel=null; saveLocal(); if(REMOTE) rClearProject(store.activeId,false); renderAll(); } };
   function timeAgo(ts){ const s=(Date.now()-ts)/1000; if(s<60)return'just now'; if(s<3600)return Math.floor(s/60)+'m ago'; if(s<86400)return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
   let toastT; function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),1800); }
-  window.addEventListener('resize',()=>{ applyDevice(); renderOverlay(); });
+  window.addEventListener('resize',renderOverlay);
   function setChip(){ const c=$('#syncChip'); if(REMOTE){ c.classList.add('on'); $('#syncTxt').textContent='Shared (live)'; c.title='Connected to Supabase - shared in real time'; } else { $('#syncTxt').textContent='Local'; c.title='Private mode - feedback stays in this browser.'; } }
 
   boot();
